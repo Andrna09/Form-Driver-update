@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, CheckCircle, ArrowLeft, MapPin } from 'lucide-react';
+import { Calendar, CheckCircle, ArrowLeft, MapPin, Camera } from 'lucide-react'; // Added Camera icon
 import { createCheckIn, getAvailableSlots, findBookingByCode, confirmArrivalCheckIn, findBookingByPlateOrPhone } from '../services/dataService'; 
 import { EntryType, Priority, SlotInfo, DriverData, QueueStatus } from '../types';
 import TicketPass from './TicketPass'; 
@@ -45,6 +45,10 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
   const [foundBooking, setFoundBooking] = useState<DriverData | null>(null);
   const [locationCheck, setLocationCheck] = useState<{lat: number, lng: number, distance: number, valid: boolean} | null>(null);
   const [locLoading, setLocLoading] = useState(false);
+  
+  // ✅ FIX: State yang sebelumnya hilang (Penyebab Error)
+  const [gpsEvidencePhoto, setGpsEvidencePhoto] = useState<string | null>(null);
+  const [editData, setEditData] = useState<Partial<DriverData>>({});
   
   // Data State
   const [poEntity, setPoEntity] = useState('SBI');
@@ -142,6 +146,13 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
       );
   };
 
+  const handleCaptureEvidence = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          fileToBase64(file).then(base64 => setGpsEvidencePhoto(base64));
+      }
+  };
+
   // --- SAFE SUBMIT (ANTI BLANK) ---
   const handleSubmitBooking = async () => {
     if (!validateStep3()) return; 
@@ -159,7 +170,6 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
             slotTime: selectedSlot!.timeLabel
         }, docBase64); 
 
-        // CEK: Pastikan driver berhasil dibuat sebelum setSuccessData
         if (driver && driver.id) {
             setSuccessData(driver);
         } else {
@@ -185,8 +195,10 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
         else if (booking.status !== QueueStatus.BOOKED) alert(`Status tidak valid: ${booking.status}.`);
         else {
             setFoundBooking(booking);
+            // ✅ FIX: Sekarang setEditData sudah ada, jadi tidak error lagi
             setEditData({ name: booking.name, licensePlate: booking.licensePlate, company: booking.company, phone: booking.phone });
             setLocationCheck(null);
+            setGpsEvidencePhoto(null);
         }
       } catch (e) { alert("Error mencari data"); }
       setIsSubmitting(false);
@@ -197,7 +209,8 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
       setIsSubmitting(true);
       try {
           const locationNote = `GPS Dist: ${locationCheck?.distance || 'Unknown'}m`;
-          const updated = await confirmArrivalCheckIn(foundBooking.id, locationNote, editData, undefined);
+          // ✅ FIX: Mengirim gpsEvidencePhoto jika ada (saat GPS invalid)
+          const updated = await confirmArrivalCheckIn(foundBooking.id, locationNote, editData, gpsEvidencePhoto || undefined);
           onSuccess(updated.id);
       } catch (e: any) {
           alert("Gagal Check-in: " + e.message);
@@ -226,7 +239,6 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
 
   // --- VIEW MODE: BOOKING FLOW ---
   if (viewMode === 'BOOKING_FLOW') {
-      // FIX: Pastikan successData VALID sebelum render TicketPass
       if (successData && successData.bookingCode) {
           return <TicketPass data={successData} onClose={() => { setViewMode('SELECT_MODE'); setSuccessData(null); setStep(1); }} />;
       }
@@ -339,9 +351,24 @@ const DriverCheckIn: React.FC<Props> = ({ onSuccess, onBack }) => {
                           {!locationCheck ? (
                               <button onClick={verifyLocation} disabled={locLoading} className="w-full py-3 border-2 border-dashed border-slate-300 rounded-xl font-bold text-slate-400 hover:border-emerald-500 hover:text-emerald-500 transition-colors">{locLoading ? 'Mendeteksi...' : 'Klik untuk Cek GPS'}</button>
                           ) : (
-                              <div className={`p-4 rounded-xl mb-4 font-bold text-center ${locationCheck.valid ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{locationCheck.valid ? `✅ LOKASI VALID` : `❌ KEJAUHAN`}</div>
+                              <div>
+                                  <div className={`p-4 rounded-xl mb-4 font-bold text-center ${locationCheck.valid ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{locationCheck.valid ? `✅ LOKASI VALID` : `❌ KEJAUHAN (${locationCheck.distance}m)`}</div>
+                                  
+                                  {/* ✅ FIX: Tombol Upload Foto Bukti jika GPS Error */}
+                                  {!locationCheck.valid && (
+                                    <div className="mt-4">
+                                        <p className="text-xs text-red-500 font-bold mb-2">Wajib upload bukti foto selfie di lokasi:</p>
+                                        <label className="w-full py-3 border-2 border-dashed border-slate-300 rounded-xl font-bold text-slate-400 hover:border-blue-500 hover:text-blue-500 transition-colors flex items-center justify-center gap-2 cursor-pointer">
+                                            <Camera className="w-5 h-5"/> {gpsEvidencePhoto ? 'Ganti Foto' : 'Ambil Foto'}
+                                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCaptureEvidence} />
+                                        </label>
+                                        {gpsEvidencePhoto && <div className="mt-2 text-xs text-emerald-600 font-bold text-center">Foto tersimpan ✅</div>}
+                                    </div>
+                                  )}
+                              </div>
                           )}
                       </div>
+                      {/* ✅ FIX: Variabel gpsEvidencePhoto sekarang sudah ada */}
                       <button onClick={handleConfirmArrival} disabled={isSubmitting || (!locationCheck?.valid && !gpsEvidencePhoto)} className="w-full py-5 bg-slate-900 text-white font-bold rounded-2xl shadow-xl hover:scale-[1.02] transition-all disabled:opacity-50">{isSubmitting ? 'Memproses...' : 'KONFIRMASI CHECK-IN'}</button>
                   </div>
               )}
