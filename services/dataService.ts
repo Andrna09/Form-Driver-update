@@ -11,9 +11,7 @@ const formatDate = (ts: number) => new Date(ts).toLocaleString('id-ID', { timeZo
 const sendWANotification = async (target: string, message: string) => {
     if (!target) return;
     try {
-        // Membersihkan nomor HP agar hanya angka
         const cleanTarget = target.replace(/[^0-9@g.us]/g, '');
-        
         await fetch('/api/whatsapp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -39,7 +37,7 @@ const mapSupabaseToDriver = (data: any): DriverData => ({
     slotDate: data.slot_date,
     slotTime: data.slot_time,
     queueNumber: data.queue_number,
-    remarks: data.remarks || data.notes, // Handle remarks/notes alias
+    remarks: data.remarks || data.notes, 
     gate: data.gate,
     photoBeforeURLs: data.photo_before_urls,
     photoAfterURLs: data.photo_after_urls
@@ -56,14 +54,11 @@ export const getDriverById = async (id: string): Promise<DriverData | null> => {
     return mapSupabaseToDriver(data);
 };
 
-// --- FUNGSI CREATE CHECK-IN (SUDAH DIPERBAIKI) ---
 export const createCheckIn = async (data: Partial<DriverData>, docFile?: string): Promise<DriverData | null> => {
-    // 1. Logic Generate Booking Code
     const nowObj = new Date();
     const period = `${nowObj.getFullYear()}${String(nowObj.getMonth() + 1).padStart(2, '0')}`;
     const prefix = `SOC-IN-${period}-`;
 
-    // Cek nomor urut terakhir
     const { data: lastBooking } = await supabase
         .from('drivers').select('booking_code')
         .ilike('booking_code', `${prefix}%`)
@@ -80,7 +75,7 @@ export const createCheckIn = async (data: Partial<DriverData>, docFile?: string)
     const code = `${prefix}${unique}`; 
     const now = Date.now();
 
-    // 2. Insert ke Database (Tanpa ID manual, biar Supabase generate UUID)
+    // Insert ke Database (Biarkan Supabase generate UUID untuk id)
     const { data: insertedData, error } = await supabase.from('drivers').insert([{
         name: data.name, 
         license_plate: data.license_plate, 
@@ -94,29 +89,22 @@ export const createCheckIn = async (data: Partial<DriverData>, docFile?: string)
         slot_time: data.slotTime, 
         entry_type: 'BOOKING'
     }])
-    .select() // PENTING: Minta data balik agar dapat ID UUID baru
+    .select()
     .single();
 
-    if (error) { 
-        console.error("DB Error", error); 
-        return null; 
-    }
+    if (error) { console.error("DB Error", error); return null; }
 
-    // 3. Kirim Notifikasi WA
     if (data.phone) {
         sendWANotification(data.phone, `KONFIRMASI BOOKING BERHASIL ✅\n\nHalo ${data.name},\nBooking Anda terdaftar:\n📋 Kode: *${code}*\n🚛 Plat: ${data.licensePlate}\n📅 Jadwal: ${data.slotDate || '-'} (${data.slotTime || '-'})`);
     }
 
-    // 4. Return Data
     return mapSupabaseToDriver(insertedData);
 };
 
 export const verifyDriver = async (id: string, verifier: string, notes: string, photos: string[]): Promise<boolean> => {
-    // Ambil data driver dulu untuk notifikasi
     const { data: driver } = await supabase.from('drivers').select('*').eq('id', id).single();
     if (!driver) return false;
 
-    // Hitung antrian hari ini
     const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
     const { count } = await supabase.from('drivers').select('*', { count: 'exact', head: true })
         .eq('status', 'CHECKED_IN').gte('verified_time', startOfDay.getTime());
@@ -135,7 +123,6 @@ export const verifyDriver = async (id: string, verifier: string, notes: string, 
 
     if (error) return false;
 
-    // Notifikasi
     if (driver.phone) sendWANotification(driver.phone, `TIKET ANTRIAN ANDA 🎫\n\n🔢 Antrian: *#${queueNo}*\n📍 Posisi: Area Parkir`);
     sendWANotification(ID_GROUP_OPS, `NOTIFIKASI OPERASIONAL 📦\nSTATUS: *ENTRY APPROVED* ✅\n🚛 Vendor: ${driver.company}\n🔢 Antrian: *#${queueNo}*`);
 
@@ -168,7 +155,6 @@ export const checkoutDriver = async (id: string, verifier: string, notes: string
     const now = Date.now();
     const { error } = await supabase.from('drivers').update({
         status: QueueStatus.COMPLETED, 
-        // check_out_time: now, // Jika kolom di DB beda, sesuaikan (misal exit_time)
         exit_time: now,
         remarks: notes,
         exit_verified_by: verifier, 
@@ -184,25 +170,18 @@ export const checkoutDriver = async (id: string, verifier: string, notes: string
 export const rejectDriver = async (id: string, reason: string, verifier: string): Promise<boolean> => {
     const { data: d } = await supabase.from('drivers').select('*').eq('id', id).single();
     if (!d) return false;
-    
-    await supabase.from('drivers').update({ 
-        status: 'REJECTED', 
-        rejection_reason: reason, // Sesuaikan field DB
-        verified_by: verifier 
-    }).eq('id', id);
-    
+    await supabase.from('drivers').update({ status: 'REJECTED', rejection_reason: reason, verified_by: verifier }).eq('id', id);
     if (d.phone) sendWANotification(d.phone, `BOOKING DITOLAK ❌\n\n🛑 Alasan: "${reason}"`);
     return true;
 };
 
 export const getAvailableSlots = async (date: string): Promise<SlotInfo[]> => {
     const dayOfWeek = new Date(date + 'T00:00:00').getDay(); 
-    if (dayOfWeek === 0) return []; // Minggu Libur
+    if (dayOfWeek === 0) return []; 
 
     const baseSlots = ["08:00 - 09:00", "09:00 - 10:00", "10:00 - 11:00", "11:00 - 12:00", "12:00 - 13:00", "13:00 - 14:00", "14:00 - 15:00", "15:00 - 16:00", "16:00 - 17:00"];
     let activeSlots = baseSlots;
 
-    // Jumat istirahat sholat
     if (dayOfWeek === 5) activeSlots = baseSlots.filter(t => !t.startsWith("11:00") && !t.startsWith("12:00"));
     else activeSlots = baseSlots.filter(t => !t.startsWith("12:00"));
 
@@ -256,25 +235,16 @@ export const updateDriverStatus = async (id: string, status: QueueStatus): Promi
 };
 
 export const scanDriverQR = async (code: string): Promise<DriverData | null> => {
-    // Bisa cari by ID (UUID) atau Booking Code
-    // Cek dulu apakah code valid UUID
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(code);
-    
     let query = supabase.from('drivers').select('*');
-    
-    if (isUUID) {
-        query = query.eq('id', code);
-    } else {
-        query = query.eq('booking_code', code);
-    }
-    
+    if (isUUID) { query = query.eq('id', code); } else { query = query.eq('booking_code', code); }
     const { data } = await query.single();
     if (!data) return null;
     return mapSupabaseToDriver(data);
 };
 
 // ============================================================================
-// 🔥 AUTH & SECURITY (USER & DIVISION)
+// 🔥 AUTH & SECURITY
 // ============================================================================
 
 const HARDCODED_USERS: UserProfile[] = [
@@ -303,7 +273,7 @@ export const verifyDivisionCredential = async (id: string, pass: string): Promis
 };
 
 // ============================================================================
-// 🔥 ADMIN / COMMAND CENTER FEATURES (STUB)
+// 🔥 ADMIN / COMMAND CENTER FEATURES
 // ============================================================================
 
 export const getGateConfigs = async (): Promise<GateConfig[]> => {
@@ -319,18 +289,24 @@ export const getGateConfigs = async (): Promise<GateConfig[]> => {
 
 export const saveGateConfig = async (gate: GateConfig): Promise<boolean> => {
     const { error } = await supabase.from('gate_configs').upsert({
-        gate_id: gate.id, // Mapping ID frontend ke gate_id DB
+        gate_id: gate.id,
         name: gate.name,
         capacity: gate.capacity,
         status: gate.status,
         type: gate.type
-    });
+    }, { onConflict: 'gate_id' });
+    return !error;
+};
+
+// ✅ FUNGSI YANG HILANG (PENYEBAB ERROR)
+export const deleteSystemSetting = async (id: string): Promise<boolean> => {
+    // Fungsi ini digunakan di CommandCenter untuk menghapus Gate
+    const { error } = await supabase.from('gate_configs').delete().eq('id', id);
     return !error;
 };
 
 // Developer Config
 export interface DevConfig { enableGpsBypass: boolean; enableMockOCR: boolean; }
-
 export const getDevConfig = (): DevConfig => {
     if (typeof window === 'undefined') return { enableGpsBypass: false, enableMockOCR: false };
     try {
@@ -338,13 +314,17 @@ export const getDevConfig = (): DevConfig => {
         return stored ? JSON.parse(stored) : { enableGpsBypass: false, enableMockOCR: false };
     } catch (e) { return { enableGpsBypass: false, enableMockOCR: false }; }
 };
-
 export const saveDevConfig = (config: DevConfig): void => {
     if (typeof window !== 'undefined') localStorage.setItem(DEV_CONFIG_KEY, JSON.stringify(config));
 };
 
-// Stubs (Untuk mencegah error build)
-export const getActivityLogs = async (): Promise<ActivityLog[]> => { return []; };
+// Stubs & Utils
+export const getActivityLogs = async (): Promise<ActivityLog[]> => { 
+    // Mengambil log dari database jika ada
+    const { data } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(20);
+    return data || []; 
+};
+
 export const wipeDatabase = async (): Promise<void> => { console.log("Wipe DB stub"); };
 export const seedDummyData = async (): Promise<void> => { console.log("Seed Data stub"); };
 export const exportDatabase = (): string => { return "{}"; };
