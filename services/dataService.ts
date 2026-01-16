@@ -37,7 +37,8 @@ const mapSupabaseToDriver = (data: any): DriverData => ({
     slotDate: data.slot_date,
     slotTime: data.slot_time,
     queueNumber: data.queue_number,
-    remarks: data.remarks || data.notes, 
+    // ✅ FIX: Mapping ke 'notes' atau 'security_notes' karena 'remarks' tidak ada di DB
+    remarks: data.notes || data.security_notes, 
     gate: data.gate,
     photoBeforeURLs: data.photo_before_urls,
     photoAfterURLs: data.photo_after_urls
@@ -75,7 +76,6 @@ export const createCheckIn = async (data: Partial<DriverData>, docFile?: string)
     const code = `${prefix}${unique}`; 
     const now = Date.now();
 
-    // Insert ke Database (Biarkan Supabase generate UUID untuk id)
     const { data: insertedData, error } = await supabase.from('drivers').insert([{
         name: data.name, 
         license_plate: data.license_plate, 
@@ -115,7 +115,7 @@ export const verifyDriver = async (id: string, verifier: string, notes: string, 
     const { error } = await supabase.from('drivers').update({
         status: QueueStatus.CHECKED_IN, 
         queue_number: queueNo, 
-        remarks: notes,
+        security_notes: notes, // ✅ FIX: Ubah remarks -> security_notes
         verified_by: verifier, 
         verified_time: now, 
         photo_before_urls: photos 
@@ -156,7 +156,7 @@ export const checkoutDriver = async (id: string, verifier: string, notes: string
     const { error } = await supabase.from('drivers').update({
         status: QueueStatus.COMPLETED, 
         exit_time: now,
-        remarks: notes,
+        notes: notes, // ✅ FIX: Ubah remarks -> notes (Catatan Keluar)
         exit_verified_by: verifier, 
         photo_after_urls: photos
     }).eq('id', id);
@@ -212,7 +212,7 @@ export const findBookingByPlateOrPhone = async (query: string): Promise<DriverDa
 export const confirmArrivalCheckIn = async (id: string, notes: string, editData?: Partial<DriverData>, newDoc?: string): Promise<DriverData> => {
     const updates: any = { 
         status: QueueStatus.AT_GATE, 
-        remarks: notes, 
+        notes: notes, // ✅ FIX: Ubah remarks -> notes (agar sesuai kolom DB)
         arrived_at_gate_time: Date.now() 
     };
     
@@ -225,7 +225,11 @@ export const confirmArrivalCheckIn = async (id: string, notes: string, editData?
     if (newDoc) updates.document_file = newDoc;
 
     const { data, error } = await supabase.from('drivers').update(updates).eq('id', id).select().single();
-    if (error) throw new Error("Gagal update arrival");
+    // Debugging agar tahu error detail jika masih gagal
+    if (error) {
+        console.error("Arrival Update Error:", error);
+        throw new Error("Gagal update arrival: " + error.message);
+    }
     return mapSupabaseToDriver(data);
 };
 
@@ -298,9 +302,7 @@ export const saveGateConfig = async (gate: GateConfig): Promise<boolean> => {
     return !error;
 };
 
-// ✅ FUNGSI YANG HILANG (PENYEBAB ERROR)
 export const deleteSystemSetting = async (id: string): Promise<boolean> => {
-    // Fungsi ini digunakan di CommandCenter untuk menghapus Gate
     const { error } = await supabase.from('gate_configs').delete().eq('id', id);
     return !error;
 };
@@ -320,7 +322,6 @@ export const saveDevConfig = (config: DevConfig): void => {
 
 // Stubs & Utils
 export const getActivityLogs = async (): Promise<ActivityLog[]> => { 
-    // Mengambil log dari database jika ada
     const { data } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(20);
     return data || []; 
 };
