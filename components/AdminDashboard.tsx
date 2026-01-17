@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { getDrivers, callDriver, updateDriverStatus, rejectDriver, getGateConfigs } from '../services/dataService';
-import { DriverData, QueueStatus, Gate, GateConfig } from '../types';
+import { DriverData, QueueStatus, GateConfig } from '../types';
 import { 
-  Truck, Activity, ExternalLink, Loader2, MapPin, Megaphone, Settings, 
-  X, CheckCircle, Clock, Calendar, FileText, ArrowRight, User, Package, CheckSquare, XCircle,
-  LayoutGrid, List, AlertTriangle, Timer, Eye, Phone, AlertCircle, Ban, Send
+  Truck, MapPin, Megaphone, X, 
+  LayoutGrid, List, Phone, ExternalLink, Loader2, Ban, Send,
+  FileText, Clock, CheckSquare, XCircle, AlertCircle, Eye
 } from 'lucide-react';
 import { getStatusLabel, getStatusColor } from '../utils/formatters';
 
 const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   // --- STATE ---
-  const [viewMode, setViewMode] = useState<'VISUAL' | 'TABLE'>('TABLE'); // Default ke TABLE sesuai request user
+  const [viewMode, setViewMode] = useState<'VISUAL' | 'TABLE'>('TABLE');
   const [drivers, setDrivers] = useState<DriverData[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -114,7 +114,6 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       return 'bg-red-100 text-red-700 border-red-200 animate-pulse'; 
   };
 
-  // Check if a gate is currently occupied by a driver who is CALLED or LOADING
   const getGateOccupant = (gateName: string) => {
       return drivers.find(d => 
           d.gate === gateName && 
@@ -122,8 +121,10 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
       );
   };
 
-  // --- DATASETS ---
-  const verifikasiData = drivers.filter(d => d.status === QueueStatus.VERIFIED);
+  // --- DATASETS (FIXED FILTER LOGIC) ---
+  // ✅ FIX: Gunakan CHECKED_IN agar data dari Security muncul di sini
+  const verifikasiData = drivers.filter(d => d.status === QueueStatus.CHECKED_IN);
+  
   const readyBongkarData = drivers.filter(d => [QueueStatus.CALLED, QueueStatus.LOADING].includes(d.status));
   const selesaiData = drivers.filter(d => d.status === QueueStatus.COMPLETED);
 
@@ -148,18 +149,13 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             </div>
             
             <div className="flex items-center gap-3 bg-slate-100 p-1 rounded-xl w-full md:w-auto">
-                 <button 
-                    onClick={() => setViewMode('VISUAL')}
-                    className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === 'VISUAL' ? 'bg-white text-sociolla-accent shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
-                 >
+                 <button onClick={() => setViewMode('VISUAL')} className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === 'VISUAL' ? 'bg-white text-sociolla-accent shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>
                      <LayoutGrid className="w-4 h-4"/> Visual Mode
                  </button>
-                 <button 
-                    onClick={() => setViewMode('TABLE')}
-                    className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === 'TABLE' ? 'bg-white text-sociolla-accent shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
-                 >
+                 <button onClick={() => setViewMode('TABLE')} className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === 'TABLE' ? 'bg-white text-sociolla-accent shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>
                      <List className="w-4 h-4"/> Table Mode
                  </button>
+                 {onBack && <button onClick={onBack} className="px-4 py-2 bg-red-50 text-red-500 rounded-lg text-xs font-bold hover:bg-red-100 ml-2">LOGOUT</button>}
             </div>
         </div>
 
@@ -240,14 +236,11 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                                                     </div>
                                                 </td>
 
-                                                {/* 2. Driver & Kontak (UPDATED: SHOW PHONE NUMBER) */}
+                                                {/* 2. Driver & Kontak */}
                                                 <td className="p-6 align-top">
                                                     <div className="font-bold text-slate-700">{d.name}</div>
                                                     <div className="text-[10px] font-mono font-medium text-slate-500 mt-1">{d.phone}</div>
-                                                    <button 
-                                                        onClick={() => openWhatsApp(d)}
-                                                        className="flex items-center gap-1 text-green-600 hover:text-green-700 text-xs font-bold mt-2 bg-green-50 px-2.5 py-1.5 rounded-lg w-fit transition-colors border border-green-100 hover:shadow-sm"
-                                                    >
+                                                    <button onClick={() => openWhatsApp(d)} className="flex items-center gap-1 text-green-600 hover:text-green-700 text-xs font-bold mt-2 bg-green-50 px-2.5 py-1.5 rounded-lg w-fit transition-colors border border-green-100 hover:shadow-sm">
                                                         <Phone className="w-3 h-3"/> Hubungi WA
                                                     </button>
                                                 </td>
@@ -256,17 +249,11 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                                                 <td className="p-6 align-top">
                                                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{d.company}</div>
                                                     <div className="font-mono text-sm font-bold text-slate-700 mb-2">{d.doNumber}</div>
-                                                    
                                                     {d.documentFile ? (
-                                                        <button 
-                                                            onClick={() => setPreviewDoc({url: d.documentFile!, type: 'DOC', title: `Surat Jalan - ${d.licensePlate}`})}
-                                                            className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-xs font-bold border border-blue-200 bg-blue-50 px-3 py-1.5 rounded-lg transition-all hover:shadow-sm"
-                                                        >
+                                                        <button onClick={() => setPreviewDoc({url: d.documentFile!, type: 'DOC', title: `Surat Jalan - ${d.licensePlate}`})} className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-xs font-bold border border-blue-200 bg-blue-50 px-3 py-1.5 rounded-lg transition-all hover:shadow-sm">
                                                             <Eye className="w-3 h-3"/> LIHAT DOKUMEN
                                                         </button>
-                                                    ) : (
-                                                        <span className="text-xs text-slate-400 italic">Tidak ada lampiran</span>
-                                                    )}
+                                                    ) : <span className="text-xs text-slate-400 italic">Tidak ada lampiran</span>}
                                                 </td>
 
                                                 {/* 4. Lokasi & Tujuan */}
@@ -284,9 +271,7 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                                                 <td className="p-6 align-top">
                                                     <div className="flex items-center gap-2 text-slate-600 mb-1">
                                                         <Clock className="w-4 h-4 text-slate-400"/>
-                                                        <span className="font-bold text-sm">
-                                                            {new Date(d.checkInTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}
-                                                        </span>
+                                                        <span className="font-bold text-sm">{new Date(d.checkInTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}</span>
                                                     </div>
                                                     {activeFilter !== 'SELESAI' && (
                                                         <div className={`text-[10px] font-bold px-2 py-1 rounded border w-fit ${getAgingColor(d.checkInTime)}`}>
@@ -295,18 +280,14 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                                                     )}
                                                 </td>
 
-                                                {/* 6. Status & Audit */}
+                                                {/* 6. Status */}
                                                 <td className="p-6 align-top">
                                                     <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide border ${getStatusColor(d.status)}`}>
                                                         <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
                                                         {getStatusLabel(d.status)}
                                                     </div>
-                                                    {/* Security Notes Indicator */}
                                                     {d.securityNotes && (
-                                                        <div 
-                                                            className="mt-2 flex items-start gap-1 text-[10px] text-red-500 font-medium bg-red-50 p-1.5 rounded"
-                                                            title={d.securityNotes}
-                                                        >
+                                                        <div className="mt-2 flex items-start gap-1 text-[10px] text-red-500 font-medium bg-red-50 p-1.5 rounded" title={d.securityNotes}>
                                                             <AlertCircle className="w-3 h-3 shrink-0"/>
                                                             <span className="line-clamp-2">{d.securityNotes}</span>
                                                         </div>
@@ -344,7 +325,6 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                     </div>
                 </div>
             )}
-
         </div>
 
         {/* --- DOCUMENT PREVIEW MODAL --- */}
@@ -352,24 +332,20 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
             <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in-up" onClick={() => setPreviewDoc(null)}>
                 <div className="bg-white rounded-3xl overflow-hidden max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
                     <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                        <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                            <FileText className="w-5 h-5 text-blue-500"/> {previewDoc.title}
-                        </h3>
+                        <h3 className="font-bold text-slate-800 flex items-center gap-2"><FileText className="w-5 h-5 text-blue-500"/> {previewDoc.title}</h3>
                         <button onClick={() => setPreviewDoc(null)} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5"/></button>
                     </div>
                     <div className="flex-1 overflow-auto bg-slate-900 flex items-center justify-center p-4">
                         <img src={previewDoc.url} alt="Document" className="max-w-full max-h-[70vh] rounded-lg shadow-2xl"/>
                     </div>
                     <div className="p-4 bg-white border-t border-slate-100 text-center">
-                        <a href={previewDoc.url} target="_blank" rel="noreferrer" className="text-blue-600 font-bold text-xs hover:underline">
-                            Buka di Tab Baru (Full Resolution)
-                        </a>
+                        <a href={previewDoc.url} target="_blank" rel="noreferrer" className="text-blue-600 font-bold text-xs hover:underline">Buka di Tab Baru (Full Resolution)</a>
                     </div>
                 </div>
             </div>
         )}
 
-        {/* Modal Logic for Call Confirmation (SHARED) */}
+        {/* Modal Logic for Call Confirmation */}
         {isModalOpen && selectedDriver && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2D2D2D]/60 backdrop-blur-md p-4 animate-fade-in-up">
                 <div className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl overflow-hidden border border-white">
@@ -382,8 +358,6 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                              <h4 className="font-black text-2xl text-slate-800 mb-1">{selectedDriver.licensePlate}</h4>
                              <p className="text-slate-500 font-medium">{selectedDriver.name} • {selectedDriver.company}</p>
                         </div>
-
-                        {/* GATE SELECTION SECTION (IMPROVED - COLLISION PREVENTION) */}
                         <div className="mb-6">
                             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 block text-center">Pilih Loading Dock / Gate</label>
                             {availableGates.length === 0 ? (
@@ -394,52 +368,19 @@ const AdminDashboard: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
                                         const occupant = getGateOccupant(gate.name);
                                         const isOccupied = !!occupant;
                                         const isSelected = selectedGateForCall === gate.name;
-
                                         return (
-                                            <button
-                                                key={gate.id}
-                                                onClick={() => !isOccupied && setSelectedGateForCall(gate.name)}
-                                                disabled={isOccupied}
-                                                className={`relative p-4 rounded-xl border-2 font-bold text-sm transition-all flex flex-col items-center gap-1 overflow-hidden
-                                                    ${isSelected 
-                                                        ? 'bg-slate-800 border-slate-800 text-white shadow-lg scale-105' 
-                                                        : isOccupied
-                                                            ? 'bg-slate-50 border-slate-100 text-slate-400 cursor-not-allowed opacity-70'
-                                                            : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300'
-                                                    }`}
-                                            >
-                                                {/* Occupied Overlay */}
-                                                {isOccupied && (
-                                                    <div className="absolute inset-0 bg-slate-100/80 flex flex-col items-center justify-center z-10 backdrop-blur-[1px]">
-                                                        <Ban className="w-5 h-5 text-red-400 mb-1" />
-                                                        <span className="text-[9px] font-black uppercase text-red-500">Occupied</span>
-                                                    </div>
-                                                )}
-
+                                            <button key={gate.id} onClick={() => !isOccupied && setSelectedGateForCall(gate.name)} disabled={isOccupied} className={`relative p-4 rounded-xl border-2 font-bold text-sm transition-all flex flex-col items-center gap-1 overflow-hidden ${isSelected ? 'bg-slate-800 border-slate-800 text-white shadow-lg scale-105' : isOccupied ? 'bg-slate-50 border-slate-100 text-slate-400 cursor-not-allowed opacity-70' : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300'}`}>
+                                                {isOccupied && (<div className="absolute inset-0 bg-slate-100/80 flex flex-col items-center justify-center z-10 backdrop-blur-[1px]"><Ban className="w-5 h-5 text-red-400 mb-1" /><span className="text-[9px] font-black uppercase text-red-500">Occupied</span></div>)}
                                                 <MapPin className={`w-5 h-5 ${isSelected ? 'text-white' : 'text-slate-300'}`}/>
                                                 <span className="relative z-0">{gate.name}</span>
-                                                
-                                                {isOccupied && (
-                                                    <span className="text-[9px] text-slate-500 mt-1 font-mono">
-                                                        By: {occupant.licensePlate}
-                                                    </span>
-                                                )}
+                                                {isOccupied && (<span className="text-[9px] text-slate-500 mt-1 font-mono">By: {occupant.licensePlate}</span>)}
                                             </button>
                                         );
                                     })}
                                 </div>
                             )}
                         </div>
-
-                        <p className="text-center text-slate-500 text-xs mb-6 px-4">
-                            Tombol ini akan otomatis membuka WhatsApp Web untuk mengirim notifikasi ke Driver.
-                        </p>
-
-                        <button 
-                            onClick={handleConfirmCall} 
-                            disabled={loading || processingId === selectedDriver.id || !selectedGateForCall} 
-                            className="w-full py-4 bg-green-600 text-white font-bold rounded-2xl hover:bg-green-700 shadow-xl shadow-green-200 disabled:opacity-50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
-                        >
+                        <button onClick={handleConfirmCall} disabled={loading || processingId === selectedDriver.id || !selectedGateForCall} className="w-full py-4 bg-green-600 text-white font-bold rounded-2xl hover:bg-green-700 shadow-xl shadow-green-200 disabled:opacity-50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]">
                             {processingId === selectedDriver.id ? <Loader2 className="w-5 h-5 animate-spin"/> : <><ExternalLink className="w-5 h-5"/> PANGGIL & KIRIM WA</>}
                         </button>
                     </div>
