@@ -1,8 +1,10 @@
-
 import React, { useEffect, useState, useRef } from 'react';
 import { getDrivers } from '../services/dataService';
 import { DriverData, QueueStatus } from '../types';
-import { ArrowLeft, Megaphone, Loader2, Clock, Truck, FileText, Volume2, Mic, Play, Power } from 'lucide-react';
+import { 
+  ArrowLeft, Loader2, Clock, Truck, FileText, 
+  Volume2, Mic, PlayCircle, CheckCircle2 
+} from 'lucide-react';
 
 interface Props {
     onBack?: () => void;
@@ -11,84 +13,133 @@ interface Props {
 const PublicMonitor: React.FC<Props> = ({ onBack }) => {
   const [drivers, setDrivers] = useState<DriverData[]>([]);
   const [time, setTime] = useState(new Date());
-  
-  // Audio System State
+   
+  // ===== AUDIO STATE =====
+  // Default: Terkunci (False) & Tampilkan Popup (True)
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [showActivationPrompt, setShowActivationPrompt] = useState(true);
+   
+  // Queue & Processing State
   const [currentlySpeaking, setCurrentlySpeaking] = useState<string | null>(null);
-  
   const lastAnnouncedIds = useRef<Set<string>>(new Set());
   const speechQueue = useRef<DriverData[]>([]);
   const isProcessingQueue = useRef(false);
-  
+   
   // Audio Assets
   const chimeAudio = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-      // Preload Chime
+      // 1. Preload Audio Asset saat pertama kali load
       chimeAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+      chimeAudio.current.preload = 'auto';
   }, []);
 
-  // --- INTELLIGENT SPELLING LOGIC ---
+  // ===== FUNGSI AKTIVASI (TRIGGER UTAMA) =====
+  const unlockAudio = async () => {
+    try {
+      // 1. Pancing Browser dengan Play Audio
+      if (chimeAudio.current) {
+        // Set Volume 100% agar terdengar jelas di gudang
+        chimeAudio.current.volume = 1.0; 
+        
+        // Play sebentar untuk buka "kunci" browser
+        await chimeAudio.current.play();
+        
+        // Tunggu audio selesai (agar user mendengar konfirmasi)
+        await new Promise<void>((resolve) => {
+             chimeAudio.current!.onended = () => resolve();
+             // Timeout 3 detik jaga-jaga jika audio error/lama
+             setTimeout(() => resolve(), 3000); 
+        });
+      }
+      
+      // 2. Test TTS (Text-to-Speech) sekilas
+      if ('speechSynthesis' in window) {
+        const test = new SpeechSynthesisUtterance(''); // Suara kosong
+        test.volume = 0.01;
+        window.speechSynthesis.speak(test);
+      }
+      
+      // 3. Update State: Audio Siap Digunakan
+      setAudioUnlocked(true);
+      setShowActivationPrompt(false);
+      
+      console.log('✅ Audio System Activated!');
+    } catch (error) {
+      console.error('Failed to unlock audio:', error);
+      alert('Gagal mengaktifkan audio. Pastikan speaker terpasang dan volume nyala.');
+    }
+  };
+
+  // --- LOGIC TTS (EJAAN PLAT NOMOR) ---
   const spellPlateNumber = (text: string) => {
       // B 1234 CDA -> "B... 1 2 3 4... C D A"
       return text.toUpperCase().split('').map(char => {
           if (/[0-9]/.test(char)) return `${char} `; 
-          if (char === ' ') return '... '; // Pause on space
+          if (char === ' ') return '... '; 
           return `${char} `; 
       }).join('');
   };
 
-  // --- QUEUE PROCESSOR ---
+  // --- ANTRIAN SUARA (QUEUE PROCESSOR) ---
   const processQueue = async () => {
       if (isProcessingQueue.current || speechQueue.current.length === 0) return;
+      
+      // STOP jika audio belum diaktifkan user
+      if (!audioUnlocked) {
+        isProcessingQueue.current = false;
+        return;
+      }
 
       isProcessingQueue.current = true;
       const driver = speechQueue.current.shift();
 
       if (driver) {
           try {
-              // A. Visual Indicator
+              // A. Visual Banner
               setCurrentlySpeaking(`Memanggil ${driver.licensePlate}...`);
 
-              // B. Play Chime
+              // B. Play Chime (Ting-Nong)
               if (chimeAudio.current) {
                   try {
+                    chimeAudio.current.currentTime = 0; 
                     await chimeAudio.current.play();
-                    // Wait for chime (approx 2s)
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                  } catch (e) {
-                      console.log("Audio play blocked by browser. Please interact with page.", e);
-                  }
+                  } catch (e) { console.error("Chime error:", e); }
               }
 
-              // C. TTS Announcement
+              // C. Suara Google (TTS)
               const spelledPlate = spellPlateNumber(driver.licensePlate);
               const gateName = driver.gate.replace('GATE_', '').replace(/_/g, ' ');
-              
               const text = `Perhatian... Panggilan untuk kendaraan... ${spelledPlate}... Harap segera merapat ke... ${gateName}`;
 
               const utterance = new SpeechSynthesisUtterance(text);
               utterance.lang = 'id-ID'; 
-              utterance.rate = 0.85; // Sedikit lambat agar jelas
+              utterance.rate = 0.85; // Agak lambat biar jelas
               utterance.pitch = 1;
               
-              utterance.onend = () => {
+              // Handler saat selesai bicara
+              const onFinish = () => {
                   setCurrentlySpeaking(null);
                   isProcessingQueue.current = false;
-                  setTimeout(processQueue, 1000); // Jeda antar panggilan
+                  setTimeout(processQueue, 1500); // Jeda antar panggilan
               };
 
+              utterance.onend = onFinish;
               utterance.onerror = () => {
                   console.error("TTS Error");
-                  isProcessingQueue.current = false;
-                  processQueue();
+                  onFinish();
               };
 
+              // Clear antrian TTS browser biar tidak stuck
+              window.speechSynthesis.cancel(); 
               window.speechSynthesis.speak(utterance);
 
           } catch (e) {
-              console.error("Audio Playback Error", e);
+              console.error("Playback Error", e);
+              setCurrentlySpeaking(null);
               isProcessingQueue.current = false;
-              processQueue();
+              setTimeout(processQueue, 1500);
           }
       } else {
           isProcessingQueue.current = false;
@@ -96,37 +147,48 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
   };
 
   const queueAnnouncement = (d: DriverData) => {
-      speechQueue.current.push(d);
-      processQueue();
+      if (!speechQueue.current.some(q => q.id === d.id)) {
+        speechQueue.current.push(d);
+        // Coba proses antrian (hanya jalan jika audioUnlocked = true)
+        processQueue();
+      }
   };
 
-  // --- DATA FETCHING ---
+  // --- DATA REFRESH ---
   const refresh = async () => {
-      const data = await getDrivers();
-      setDrivers(data);
-      setTime(new Date());
+      try {
+        const data = await getDrivers();
+        setDrivers(data);
+        setTime(new Date());
 
-      // Check for drivers who are newly CALLED
-      const calledDrivers = data.filter(d => d.status === QueueStatus.CALLED);
-      calledDrivers.forEach(d => {
-          if (!lastAnnouncedIds.current.has(d.id)) {
-              queueAnnouncement(d);
-              lastAnnouncedIds.current.add(d.id);
-          }
-      });
+        // Cek driver yang statusnya CALLED (Dipanggil)
+        const calledDrivers = data.filter(d => d.status === QueueStatus.CALLED);
+        calledDrivers.forEach(d => {
+             // Jika ID ini belum pernah diumumkan
+             if (!lastAnnouncedIds.current.has(d.id)) {
+                 queueAnnouncement(d);
+                 lastAnnouncedIds.current.add(d.id);
+             }
+        });
+        
+        // Pancing proses antrian barangkali ada sisa
+        if (audioUnlocked) processQueue();
+
+      } catch (err) {
+        console.error('Refresh error:', err);
+      }
   };
 
   useEffect(() => {
       refresh();
+      // Refresh setiap 5 detik
       const interval = setInterval(refresh, 5000); 
       return () => clearInterval(interval);
-  }, []);
+  }, [audioUnlocked]); // Re-run effect saat audio aktif
 
   // --- RENDER HELPERS ---
   const loadingDrivers = drivers.filter(d => d.status === QueueStatus.LOADING || d.status === QueueStatus.CALLED);
-  const waitingDrivers = drivers
-      .filter(d => d.status === QueueStatus.VERIFIED)
-      .sort((a,b) => (a.verifiedTime || 0) - (b.verifiedTime || 0));
+  const waitingDrivers = drivers.filter(d => d.status === QueueStatus.VERIFIED).sort((a,b) => (a.verifiedTime || 0) - (b.verifiedTime || 0));
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 overflow-hidden font-sans relative selection:bg-blue-500 selection:text-white">
@@ -134,29 +196,72 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
         {/* Background Mesh Effect */}
         <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950 -z-10"></div>
 
-        {/* CONTROLS */}
+        {/* ===== POPUP AKTIVASI (WAJIB MUNCUL DI AWAL) ===== */}
+        {showActivationPrompt && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md animate-fade-in">
+            <div className="bg-slate-900 border-2 border-blue-500/50 rounded-3xl p-8 md:p-12 max-w-lg mx-4 text-center shadow-[0_0_50px_rgba(59,130,246,0.5)]">
+              <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce shadow-lg shadow-blue-500/50">
+                <Volume2 className="w-12 h-12 text-white" />
+              </div>
+              
+              <h2 className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight">SISTEM MONITORING</h2>
+              <p className="text-slate-300 mb-8 text-lg leading-relaxed">
+                Klik tombol di bawah untuk mengaktifkan<br/>
+                <span className="text-blue-400 font-bold">Notifikasi Suara & Layar</span>
+              </p>
+              
+              <button
+                onClick={unlockAudio}
+                className="w-full py-5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black text-xl rounded-2xl transition-all transform hover:scale-105 shadow-xl shadow-blue-900/50 flex items-center justify-center gap-3 group"
+              >
+                <PlayCircle className="w-8 h-8 group-hover:rotate-12 transition-transform" />
+                AKTIFKAN SEKARANG
+              </button>
+              
+              <p className="mt-6 text-slate-500 text-sm font-medium">
+                *Wajib diklik setiap kali monitor dinyalakan
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* CONTROLS POJOK KIRI ATAS */}
         <div className="absolute top-4 left-4 md:top-8 md:left-8 z-50 flex gap-4">
             {onBack && (
                 <button onClick={onBack} className="p-3 bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-sm transition-all text-white flex items-center gap-2">
                     <ArrowLeft className="w-5 h-5"/> <span className="hidden md:inline text-xs font-bold">MENU UTAMA</span>
                 </button>
             )}
-            <div className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-full backdrop-blur-md">
-                <Volume2 className="w-4 h-4 text-emerald-500 animate-pulse" />
-                <span className="text-xs font-bold text-emerald-500 uppercase tracking-widest">AUDIO AUTO-ON</span>
+            {/* Badge Status Audio */}
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all ${
+              audioUnlocked 
+                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' 
+                : 'bg-red-500/10 border border-red-500/20 text-red-400 animate-pulse'
+            }`}>
+                {audioUnlocked ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="text-xs font-bold uppercase tracking-widest">AUDIO AKTIF</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-4 h-4" />
+                    <span className="text-xs font-bold uppercase tracking-widest">AUDIO OFF</span>
+                  </>
+                )}
             </div>
         </div>
 
         {/* DYNAMIC ANNOUNCEMENT BANNER */}
         {currentlySpeaking && (
-            <div className="absolute top-8 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-900 px-8 py-3 rounded-full shadow-2xl shadow-amber-500/50 flex items-center gap-3 animate-bounce">
+            <div className="absolute top-24 md:top-8 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-900 px-8 py-3 rounded-full shadow-2xl shadow-amber-500/50 flex items-center gap-3 animate-bounce">
                 <Mic className="w-6 h-6 animate-pulse" />
                 <span className="font-black uppercase tracking-widest text-sm">{currentlySpeaking}</span>
             </div>
         )}
 
-        {/* Top Bar */}
-        <div className="flex flex-col md:flex-row justify-end md:justify-between items-end border-b border-white/10 pb-6 mb-8 pl-16 md:pl-0">
+        {/* HEADER JAM & TANGGAL */}
+        <div className="flex flex-col md:flex-row justify-end md:justify-between items-end border-b border-white/10 pb-6 mb-8 pl-16 md:pl-0 mt-16 md:mt-0">
             <div className="hidden md:block">
                 <h1 className="text-4xl md:text-6xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">WAREHOUSE MONITOR</h1>
                 <p className="text-xl md:text-2xl text-slate-400 font-bold mt-2 tracking-[0.2em]">LIVE QUEUE STATUS</p>
@@ -171,9 +276,10 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
             </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[75vh]">
+        {/* GRID CONTENT */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[65vh] md:h-[75vh]">
             
-            {/* LEFT: LOADING / CALLED (Big Cards) */}
+            {/* KIRI: STATUS BONGKAR MUAT (Besar) */}
             <div className="bg-slate-900/40 backdrop-blur-sm rounded-3xl border border-white/10 p-6 flex flex-col relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-emerald-500"></div>
                 
@@ -191,36 +297,26 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
                     ) : loadingDrivers.map(d => {
                         const isCalled = d.status === QueueStatus.CALLED;
                         return (
-                            <div 
-                                key={d.id} 
-                                className={`relative p-6 rounded-2xl border-l-8 shadow-2xl transition-all duration-500 overflow-hidden group
+                            <div key={d.id} className={`relative p-6 rounded-2xl border-l-8 shadow-2xl transition-all duration-500 overflow-hidden group
                                     ${isCalled 
                                         ? 'bg-gradient-to-r from-amber-900/40 to-slate-900 border-amber-500 shadow-amber-900/20 scale-[1.02] ring-2 ring-amber-500/50' 
                                         : 'bg-gradient-to-r from-emerald-900/30 to-slate-900 border-emerald-500 shadow-emerald-900/10'
-                                    }`}
-                            >
-                                {/* Active Indicator Background for CALLED */}
+                                    }`}>
                                 {isCalled && (
                                     <div className="absolute inset-0 bg-amber-500/10 animate-pulse z-0 pointer-events-none"></div>
                                 )}
 
                                 <div className="relative z-10 flex justify-between items-center">
                                     <div className="flex-1 min-w-0 pr-4">
-                                        {/* Badge Indicator */}
                                         <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider mb-2
                                             ${isCalled ? 'bg-amber-500 text-slate-900 animate-pulse shadow-lg shadow-amber-500/50' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
-                                            {isCalled ? (
-                                                <><Megaphone className="w-3 h-3" /> SILAKAN MERAPAT</>
-                                            ) : (
-                                                <><Loader2 className="w-3 h-3 animate-spin" /> SEDANG PROSES</>
-                                            )}
+                                            {isCalled ? "SILAKAN MERAPAT" : "SEDANG PROSES"}
                                         </div>
 
-                                        <div className="text-5xl md:text-6xl font-black font-mono mb-1 tracking-tight text-white group-hover:scale-105 transition-transform origin-left">
+                                        <div className="text-5xl md:text-6xl font-black font-mono mb-1 tracking-tight text-white">
                                             {d.licensePlate}
                                         </div>
                                         
-                                        {/* PO Info Display */}
                                         <div className="flex items-center gap-3 mt-2 overflow-hidden">
                                             <span className="px-3 py-1 rounded-lg bg-white/10 text-sm font-bold text-slate-400 border border-white/5 whitespace-nowrap">{d.company}</span>
                                             <div className="flex items-center gap-2 text-lg md:text-xl text-slate-200 font-bold font-mono tracking-tight truncate">
@@ -244,7 +340,7 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
                 </div>
             </div>
 
-            {/* RIGHT: WAITING LIST (List View) */}
+            {/* KANAN: ANTRIAN BERIKUTNYA (List Kecil) */}
             <div className="bg-slate-900/40 backdrop-blur-sm rounded-3xl border border-white/10 p-6 flex flex-col relative overflow-hidden">
                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
 
@@ -253,7 +349,6 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
                     ANTRIAN BERIKUTNYA
                 </h2>
 
-                {/* Header Row */}
                 <div className="grid grid-cols-12 gap-4 px-4 py-2 text-slate-500 font-bold uppercase text-sm tracking-wider border-b border-white/10 mb-2">
                     <div className="col-span-3">No. Antrian</div>
                     <div className="col-span-6">Identitas & Dokumen</div>
@@ -264,11 +359,7 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
                     {waitingDrivers.length === 0 ? (
                         <div className="mt-20 text-center text-slate-600 italic text-xl">Tidak ada antrian</div>
                     ) : waitingDrivers.map((d, i) => (
-                        <div 
-                            key={d.id} 
-                            className="grid grid-cols-12 gap-4 items-center p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors animate-fade-in-up"
-                            style={{ animationDelay: `${i * 100}ms` }}
-                        >
+                        <div key={d.id} className="grid grid-cols-12 gap-4 items-center p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors animate-fade-in-up" style={{ animationDelay: `${i * 100}ms` }}>
                             <div className="col-span-3">
                                 <span className="text-3xl font-black font-mono text-yellow-400">{d.queueNumber || '-'}</span>
                             </div>
@@ -288,10 +379,9 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
                     ))}
                 </div>
             </div>
-
         </div>
 
-        {/* Running Text */}
+        {/* RUNNING TEXT BAWAH */}
         <div className="fixed bottom-0 left-0 w-full bg-slate-900 border-t border-white/10 text-white py-3 overflow-hidden whitespace-nowrap z-50">
             <div className="animate-[shimmer_20s_linear_infinite] inline-block font-mono font-bold text-lg text-blue-200">
                 +++ HARAP MEMPERSIAPKAN DOKUMEN SEBELUM MENUJU GATE +++ DILARANG MEROKOK DI AREA BONGKAR MUAT +++ UTAMAKAN KESELAMATAN KERJA +++ 
@@ -299,7 +389,6 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
             </div>
         </div>
         
-        {/* Helper Style for Scrollbar inside this component */}
         <style>{`
             .custom-scrollbar::-webkit-scrollbar { width: 6px; }
             .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
