@@ -66,7 +66,7 @@ export const getDriverById = async (id: string): Promise<DriverData | null> => {
 
 // 1. CREATE BOOKING
 export const createCheckIn = async (data: Partial<DriverData>, docFile?: string): Promise<DriverData | null> => {
-    // FIX: Ambil plat nomor dari field manapun yang tersedia
+    // FIX: Ambil plat nomor dari field manapun yang tersedia (camelCase atau snake_case)
     const plateNumber = data.licensePlate || (data as any).license_plate || '-';
     const nameStr = data.name || 'Driver';
 
@@ -247,7 +247,7 @@ export const rejectDriver = async (id: string, reason: string, verifier: string)
     return true;
 };
 
-// --- FUNGSI PENDUKUNG (WAJIB ADA UNTUK MENCEGAH ERROR DI FILE LAIN) ---
+// --- FUNGSI PENDUKUNG ---
 
 export const getAvailableSlots = async (date: string): Promise<SlotInfo[]> => {
     const dayOfWeek = new Date(date + 'T00:00:00').getDay(); 
@@ -300,7 +300,49 @@ export const scanDriverQR = async (code: string): Promise<DriverData | null> => 
     return mapSupabaseToDriver(data);
 };
 
-// GATE & USERS & UTILS (JANGAN DIHAPUS - DIGUNAKAN SYSTEM OVERVIEW)
+// ============================================================================
+// 🔥 AUTH & SECURITY (FIXED LOGIN)
+// ============================================================================
+
+// DAFTAR USER HARDCODE (JANGAN DIHAPUS)
+const HARDCODED_USERS: UserProfile[] = [
+    { id: 'SECURITY', name: 'Pak Satpam', role: 'SECURITY', pin_code: '1234', status: 'ACTIVE' },
+    { id: 'ADMIN', name: 'Admin Ops', role: 'ADMIN', pin_code: '1234', status: 'ACTIVE' },
+    { id: 'MANAGER', name: 'Manager Logistik', role: 'MANAGER', pin_code: '1234', status: 'ACTIVE' }
+];
+
+export const loginSystem = async (id: string, pass: string): Promise<UserProfile> => {
+    await new Promise(r => setTimeout(r, 500)); // Simulasi loading
+    const cleanId = id.trim().toUpperCase();
+    const cleanPass = pass.trim();
+    
+    // Cari user di list hardcode
+    const user = HARDCODED_USERS.find(u => u.id === cleanId && u.pin_code === cleanPass);
+    
+    if (!user) throw new Error("ID atau PIN salah!");
+    return user;
+};
+
+export const verifyDivisionCredential = async (id: string, pass: string): Promise<DivisionConfig | null> => {
+    const cleanId = id.trim().toUpperCase();
+    const cleanPass = pass.trim();
+    
+    // Cari di hardcode users juga agar Admin bisa login via jalur divisi
+    const user = HARDCODED_USERS.find(u => u.id === cleanId && u.pin_code === cleanPass);
+    
+    if (user) {
+        return { 
+            id: user.id, 
+            name: user.name, 
+            role: user.role as any, 
+            password: user.pin_code, 
+            theme: 'blue' 
+        };
+    }
+    return null;
+};
+
+// GATE UTILS
 export const getGateConfigs = async (): Promise<GateConfig[]> => {
     const { data } = await supabase.from('gate_configs').select('*').order('gate_id', { ascending: true });
     return (data || []).map((g: any) => ({ id: g.id, name: g.name, capacity: g.capacity, status: g.status, type: g.type }));
@@ -314,7 +356,7 @@ export const deleteSystemSetting = async (id: string): Promise<boolean> => {
     return !error;
 };
 
-// DEV CONFIG & STUBS (DIPERLUKAN AGAR FILE LAIN TIDAK ERROR)
+// DEV & LOGS
 export interface DevConfig { enableGpsBypass: boolean; enableMockOCR: boolean; }
 export const getDevConfig = (): DevConfig => {
     if (typeof window === 'undefined') return { enableGpsBypass: false, enableMockOCR: false };
@@ -325,22 +367,6 @@ export const getDevConfig = (): DevConfig => {
 };
 export const saveDevConfig = (config: DevConfig): void => {
     if (typeof window !== 'undefined') localStorage.setItem(DEV_CONFIG_KEY, JSON.stringify(config));
-};
-
-// DUMMY / STUB FUNCTIONS
-const HARDCODED_USERS: UserProfile[] = [
-    { id: 'SECURITY', name: 'Pak Satpam', role: 'SECURITY', pin_code: '1234', status: 'ACTIVE' },
-    { id: 'ADMIN', name: 'Admin Ops', role: 'ADMIN', pin_code: '1234', status: 'ACTIVE' }
-];
-export const loginSystem = async (id: string, pass: string): Promise<UserProfile> => {
-    await new Promise(r => setTimeout(r, 500));
-    const user = HARDCODED_USERS.find(u => u.id === id.toUpperCase() && u.pin_code === pass);
-    if (!user) throw new Error("Invalid Credentials");
-    return user;
-};
-export const verifyDivisionCredential = async (id: string, pass: string): Promise<DivisionConfig | null> => {
-    if (id.toUpperCase() === 'SECURITY' && pass === '1234') return { id: 'SECURITY', name: 'Security Guard', role: 'SECURITY', password: '1234', theme: 'blue' };
-    return null;
 };
 export const getActivityLogs = async (): Promise<ActivityLog[]> => { return []; };
 export const wipeDatabase = async (): Promise<void> => { console.log("Wipe DB stub"); };
