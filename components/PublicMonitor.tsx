@@ -2,8 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { getDrivers } from '../services/dataService';
 import { DriverData, QueueStatus } from '../types';
 import { 
-  ArrowLeft, Loader2, Clock, Truck, FileText, 
-  Volume2, Mic, PlayCircle, CheckCircle2 
+  ArrowLeft, Clock, Truck, Volume2, PlayCircle, 
+  AlertCircle, Megaphone, Activity 
 } from 'lucide-react';
 
 interface Props {
@@ -11,69 +11,47 @@ interface Props {
 }
 
 const PublicMonitor: React.FC<Props> = ({ onBack }) => {
+  // --- STATE DATA ---
   const [drivers, setDrivers] = useState<DriverData[]>([]);
   const [time, setTime] = useState(new Date());
    
-  // ===== AUDIO STATE =====
-  // Default: Terkunci (False) & Tampilkan Popup (True)
+  // --- AUDIO STATE ---
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [showActivationPrompt, setShowActivationPrompt] = useState(true);
-   
-  // Queue & Processing State
   const [currentlySpeaking, setCurrentlySpeaking] = useState<string | null>(null);
+  
+  // Refs
   const lastAnnouncedIds = useRef<Set<string>>(new Set());
   const speechQueue = useRef<DriverData[]>([]);
   const isProcessingQueue = useRef(false);
-   
-  // Audio Assets
   const chimeAudio = useRef<HTMLAudioElement | null>(null);
 
+  // 1. INIT AUDIO
   useEffect(() => {
-      // 1. Preload Audio Asset saat pertama kali load
       chimeAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
       chimeAudio.current.preload = 'auto';
   }, []);
 
-  // ===== FUNGSI AKTIVASI (TRIGGER UTAMA) =====
+  // 2. UNLOCK AUDIO
   const unlockAudio = async () => {
     try {
-      // 1. Pancing Browser dengan Play Audio
       if (chimeAudio.current) {
-        // Set Volume 100% agar terdengar jelas di gudang
         chimeAudio.current.volume = 1.0; 
-        
-        // Play sebentar untuk buka "kunci" browser
         await chimeAudio.current.play();
-        
-        // Tunggu audio selesai (agar user mendengar konfirmasi)
-        await new Promise<void>((resolve) => {
-             chimeAudio.current!.onended = () => resolve();
-             // Timeout 3 detik jaga-jaga jika audio error/lama
-             setTimeout(() => resolve(), 3000); 
-        });
       }
-      
-      // 2. Test TTS (Text-to-Speech) sekilas
       if ('speechSynthesis' in window) {
-        const test = new SpeechSynthesisUtterance(''); // Suara kosong
-        test.volume = 0.01;
+        const test = new SpeechSynthesisUtterance('');
         window.speechSynthesis.speak(test);
       }
-      
-      // 3. Update State: Audio Siap Digunakan
       setAudioUnlocked(true);
       setShowActivationPrompt(false);
-      
-      console.log('✅ Audio System Activated!');
     } catch (error) {
-      console.error('Failed to unlock audio:', error);
-      alert('Gagal mengaktifkan audio. Pastikan speaker terpasang dan volume nyala.');
+      console.error('Audio unlock failed:', error);
     }
   };
 
-  // --- LOGIC TTS (EJAAN PLAT NOMOR) ---
+  // 3. TTS LOGIC
   const spellPlateNumber = (text: string) => {
-      // B 1234 CDA -> "B... 1 2 3 4... C D A"
       return text.toUpperCase().split('').map(char => {
           if (/[0-9]/.test(char)) return `${char} `; 
           if (char === ' ') return '... '; 
@@ -81,318 +59,296 @@ const PublicMonitor: React.FC<Props> = ({ onBack }) => {
       }).join('');
   };
 
-  // --- ANTRIAN SUARA (QUEUE PROCESSOR) ---
   const processQueue = async () => {
-      if (isProcessingQueue.current || speechQueue.current.length === 0) return;
-      
-      // STOP jika audio belum diaktifkan user
-      if (!audioUnlocked) {
-        isProcessingQueue.current = false;
-        return;
-      }
+      if (isProcessingQueue.current || speechQueue.current.length === 0 || !audioUnlocked) return;
 
       isProcessingQueue.current = true;
       const driver = speechQueue.current.shift();
 
       if (driver) {
           try {
-              // A. Visual Banner
               setCurrentlySpeaking(`Memanggil ${driver.licensePlate}...`);
-
-              // B. Play Chime (Ting-Nong)
+              
               if (chimeAudio.current) {
-                  try {
-                    chimeAudio.current.currentTime = 0; 
-                    await chimeAudio.current.play();
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                  } catch (e) { console.error("Chime error:", e); }
+                  chimeAudio.current.currentTime = 0; 
+                  await chimeAudio.current.play();
+                  await new Promise(r => setTimeout(r, 1500)); 
               }
 
-              // C. Suara Google (TTS)
               const spelledPlate = spellPlateNumber(driver.licensePlate);
               const gateName = driver.gate.replace('GATE_', '').replace(/_/g, ' ');
-              const text = `Perhatian... Panggilan untuk kendaraan... ${spelledPlate}... Harap segera merapat ke... ${gateName}`;
+              const text = `Panggilan untuk kendaraan... ${spelledPlate}... Harap segera merapat ke... ${gateName}`;
 
               const utterance = new SpeechSynthesisUtterance(text);
               utterance.lang = 'id-ID'; 
-              utterance.rate = 0.85; // Agak lambat biar jelas
-              utterance.pitch = 1;
+              utterance.rate = 0.9;
+              utterance.pitch = 1.1;
               
-              // Handler saat selesai bicara
-              const onFinish = () => {
+              utterance.onend = () => {
                   setCurrentlySpeaking(null);
                   isProcessingQueue.current = false;
-                  setTimeout(processQueue, 1500); // Jeda antar panggilan
+                  setTimeout(processQueue, 1000); 
               };
-
-              utterance.onend = onFinish;
-              utterance.onerror = () => {
-                  console.error("TTS Error");
-                  onFinish();
-              };
-
-              // Clear antrian TTS browser biar tidak stuck
-              window.speechSynthesis.cancel(); 
+              
+              window.speechSynthesis.cancel();
               window.speechSynthesis.speak(utterance);
 
           } catch (e) {
-              console.error("Playback Error", e);
-              setCurrentlySpeaking(null);
               isProcessingQueue.current = false;
-              setTimeout(processQueue, 1500);
+              processQueue();
           }
       } else {
           isProcessingQueue.current = false;
       }
   };
 
-  const queueAnnouncement = (d: DriverData) => {
-      if (!speechQueue.current.some(q => q.id === d.id)) {
-        speechQueue.current.push(d);
-        // Coba proses antrian (hanya jalan jika audioUnlocked = true)
-        processQueue();
-      }
-  };
-
-  // --- DATA REFRESH ---
+  // 4. DATA REFRESH
   const refresh = async () => {
       try {
         const data = await getDrivers();
         setDrivers(data);
         setTime(new Date());
 
-        // Cek driver yang statusnya CALLED (Dipanggil)
         const calledDrivers = data.filter(d => d.status === QueueStatus.CALLED);
         calledDrivers.forEach(d => {
-             // Jika ID ini belum pernah diumumkan
              if (!lastAnnouncedIds.current.has(d.id)) {
-                 queueAnnouncement(d);
+                 speechQueue.current.push(d);
                  lastAnnouncedIds.current.add(d.id);
              }
         });
         
-        // Pancing proses antrian barangkali ada sisa
         if (audioUnlocked) processQueue();
 
       } catch (err) {
-        console.error('Refresh error:', err);
+        console.error('Error fetching data', err);
       }
   };
 
   useEffect(() => {
       refresh();
-      // Refresh setiap 5 detik
       const interval = setInterval(refresh, 5000); 
       return () => clearInterval(interval);
-  }, [audioUnlocked]); // Re-run effect saat audio aktif
+  }, [audioUnlocked]);
 
-  // --- RENDER HELPERS ---
-  const loadingDrivers = drivers.filter(d => d.status === QueueStatus.LOADING || d.status === QueueStatus.CALLED);
-  const waitingDrivers = drivers.filter(d => d.status === QueueStatus.VERIFIED).sort((a,b) => (a.verifiedTime || 0) - (b.verifiedTime || 0));
+  // --- FILTERS ---
+  const waitingList = drivers
+    .filter(d => d.status === QueueStatus.VERIFIED)
+    .sort((a,b) => (a.verifiedTime || 0) - (b.verifiedTime || 0));
+
+  const calledList = drivers
+    .filter(d => d.status === QueueStatus.CALLED); 
+
+  const loadingList = drivers
+    .filter(d => d.status === QueueStatus.LOADING);
+
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 overflow-hidden font-sans relative selection:bg-blue-500 selection:text-white">
+    // UBAH 1: Gunakan h-screen hanya di desktop (lg). Di HP gunakan min-h-screen agar bisa scroll ke bawah.
+    <div className="min-h-screen lg:h-screen bg-slate-950 text-white font-sans relative overflow-x-hidden flex flex-col">
         
-        {/* Background Mesh Effect */}
-        <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/20 via-slate-950 to-slate-950 -z-10"></div>
+        {/* Background */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/10 via-slate-950 to-slate-950 -z-10 fixed"></div>
 
-        {/* ===== POPUP AKTIVASI (WAJIB MUNCUL DI AWAL) ===== */}
+        {/* ACTIVATION MODAL (Responsive Padding) */}
         {showActivationPrompt && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md animate-fade-in">
-            <div className="bg-slate-900 border-2 border-blue-500/50 rounded-3xl p-8 md:p-12 max-w-lg mx-4 text-center shadow-[0_0_50px_rgba(59,130,246,0.5)]">
-              <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce shadow-lg shadow-blue-500/50">
-                <Volume2 className="w-12 h-12 text-white" />
-              </div>
-              
-              <h2 className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight">SISTEM MONITORING</h2>
-              <p className="text-slate-300 mb-8 text-lg leading-relaxed">
-                Klik tombol di bawah untuk mengaktifkan<br/>
-                <span className="text-blue-400 font-bold">Notifikasi Suara & Layar</span>
-              </p>
-              
-              <button
-                onClick={unlockAudio}
-                className="w-full py-5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black text-xl rounded-2xl transition-all transform hover:scale-105 shadow-xl shadow-blue-900/50 flex items-center justify-center gap-3 group"
-              >
-                <PlayCircle className="w-8 h-8 group-hover:rotate-12 transition-transform" />
-                AKTIFKAN SEKARANG
-              </button>
-              
-              <p className="mt-6 text-slate-500 text-sm font-medium">
-                *Wajib diklik setiap kali monitor dinyalakan
-              </p>
+          <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="text-center space-y-4 md:space-y-6 animate-in fade-in zoom-in duration-300 max-w-sm md:max-w-lg w-full bg-slate-900/50 p-6 md:p-8 rounded-3xl border border-white/10">
+                <div className="w-16 h-16 md:w-20 md:h-20 bg-blue-600 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(37,99,235,0.5)]">
+                    <Volume2 className="w-8 h-8 md:w-10 md:h-10 text-white" />
+                </div>
+                <h1 className="text-2xl md:text-4xl font-black text-white tracking-tight">AKTIFKAN MONITOR</h1>
+                <p className="text-sm md:text-base text-slate-400">Klik tombol di bawah untuk mengizinkan notifikasi suara.</p>
+                <button onClick={unlockAudio} className="w-full bg-white text-blue-900 py-3 md:py-4 rounded-xl font-bold text-lg hover:scale-105 transition-transform flex items-center justify-center gap-2">
+                    <PlayCircle className="w-5 h-5 md:w-6 md:h-6" /> MULAI SISTEM
+                </button>
             </div>
           </div>
         )}
 
-        {/* CONTROLS POJOK KIRI ATAS */}
-        <div className="absolute top-4 left-4 md:top-8 md:left-8 z-50 flex gap-4">
-            {onBack && (
-                <button onClick={onBack} className="p-3 bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-sm transition-all text-white flex items-center gap-2">
-                    <ArrowLeft className="w-5 h-5"/> <span className="hidden md:inline text-xs font-bold">MENU UTAMA</span>
-                </button>
-            )}
-            {/* Badge Status Audio */}
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all ${
-              audioUnlocked 
-                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' 
-                : 'bg-red-500/10 border border-red-500/20 text-red-400 animate-pulse'
-            }`}>
-                {audioUnlocked ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span className="text-xs font-bold uppercase tracking-widest">AUDIO AKTIF</span>
-                  </>
-                ) : (
-                  <>
-                    <Volume2 className="w-4 h-4" />
-                    <span className="text-xs font-bold uppercase tracking-widest">AUDIO OFF</span>
-                  </>
-                )}
+        {/* HEADER (Responsive Layout) */}
+        <header className="bg-slate-900/80 border-b border-white/10 flex flex-col md:flex-row items-center justify-between p-4 md:px-6 backdrop-blur-sm shrink-0 gap-4 md:gap-0 sticky top-0 z-50 lg:relative">
+            <div className="flex items-center justify-between w-full md:w-auto gap-4">
+                <div className="flex items-center gap-3">
+                    {onBack && (
+                        <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors">
+                            <ArrowLeft className="w-5 h-5 md:w-6 md:h-6" />
+                        </button>
+                    )}
+                    <div>
+                        <h1 className="text-lg md:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                            <Truck className="w-6 h-6 md:w-8 md:h-8 text-blue-500" />
+                            LOGISTICS
+                        </h1>
+                        <div className="hidden md:flex items-center gap-2 text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-widest">
+                            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                            ONLINE • {audioUnlocked ? 'AUDIO ON' : 'MUTED'}
+                        </div>
+                    </div>
+                </div>
+                
+                {/* Jam Mobile (Muncul di kanan atas pada HP) */}
+                <div className="md:hidden text-right">
+                    <div className="text-2xl font-black font-mono text-white leading-none">
+                        {time.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}
+                    </div>
+                </div>
             </div>
-        </div>
 
-        {/* DYNAMIC ANNOUNCEMENT BANNER */}
-        {currentlySpeaking && (
-            <div className="absolute top-24 md:top-8 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-900 px-8 py-3 rounded-full shadow-2xl shadow-amber-500/50 flex items-center gap-3 animate-bounce">
-                <Mic className="w-6 h-6 animate-pulse" />
-                <span className="font-black uppercase tracking-widest text-sm">{currentlySpeaking}</span>
-            </div>
-        )}
-
-        {/* HEADER JAM & TANGGAL */}
-        <div className="flex flex-col md:flex-row justify-end md:justify-between items-end border-b border-white/10 pb-6 mb-8 pl-16 md:pl-0 mt-16 md:mt-0">
-            <div className="hidden md:block">
-                <h1 className="text-4xl md:text-6xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">WAREHOUSE MONITOR</h1>
-                <p className="text-xl md:text-2xl text-slate-400 font-bold mt-2 tracking-[0.2em]">LIVE QUEUE STATUS</p>
-            </div>
-            <div className="text-right">
-                <div className="text-5xl md:text-8xl font-black font-mono tracking-tighter text-white drop-shadow-lg">
+            {/* Jam Desktop */}
+            <div className="hidden md:block text-right">
+                <div className="text-4xl font-black font-mono text-white leading-none">
                     {time.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}
                 </div>
-                <div className="text-xl text-slate-400 font-bold uppercase tracking-wider">
+                <div className="text-sm font-bold text-slate-400 uppercase">
                     {time.toLocaleDateString('id-ID', {weekday:'long', day:'numeric', month:'long'})}
                 </div>
             </div>
-        </div>
+        </header>
 
-        {/* GRID CONTENT */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[65vh] md:h-[75vh]">
+        {/* MAIN CONTENT (Grid Desktop, Flex Mobile) */}
+        <main className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-visible lg:overflow-hidden">
             
-            {/* KIRI: STATUS BONGKAR MUAT (Besar) */}
-            <div className="bg-slate-900/40 backdrop-blur-sm rounded-3xl border border-white/10 p-6 flex flex-col relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-emerald-500"></div>
-                
-                <h2 className="text-3xl font-black text-white mb-6 flex items-center gap-4">
-                    <Loader2 className="w-8 h-8 text-green-400 animate-spin" />
-                    STATUS BONGKAR MUAT
-                </h2>
-                
-                <div className="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                    {loadingDrivers.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-600 italic">
-                            <Truck className="w-16 h-16 mb-4 opacity-20" />
-                            <div className="text-2xl font-bold opacity-50">Area Dock Kosong</div>
+            {/* === ZONA 2: PANGGILAN (DI HP JADI URUTAN PERTAMA) === */}
+            {/* UBAH 2: Tambahkan 'order-first lg:order-none' agar di HP dia naik ke atas */}
+            <section className="order-first lg:order-none lg:col-span-5 flex flex-col gap-4">
+                <div className="flex items-center gap-2 mb-1">
+                    <Megaphone className="w-5 h-5 md:w-6 md:h-6 text-amber-500 animate-pulse" />
+                    <h2 className="text-lg md:text-xl font-black text-white tracking-wide">PANGGILAN</h2>
+                </div>
+
+                <div className="flex-1 lg:overflow-y-auto space-y-4 pr-1 custom-scrollbar">
+                    {calledList.length === 0 ? (
+                        <div className="h-40 lg:h-full border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center text-slate-600 p-4 text-center bg-slate-900/30">
+                            <Megaphone className="w-8 h-8 md:w-10 md:h-10 opacity-20 mb-2" />
+                            <h3 className="text-lg md:text-2xl font-bold text-slate-500">Standby...</h3>
                         </div>
-                    ) : loadingDrivers.map(d => {
-                        const isCalled = d.status === QueueStatus.CALLED;
-                        return (
-                            <div key={d.id} className={`relative p-6 rounded-2xl border-l-8 shadow-2xl transition-all duration-500 overflow-hidden group
-                                    ${isCalled 
-                                        ? 'bg-gradient-to-r from-amber-900/40 to-slate-900 border-amber-500 shadow-amber-900/20 scale-[1.02] ring-2 ring-amber-500/50' 
-                                        : 'bg-gradient-to-r from-emerald-900/30 to-slate-900 border-emerald-500 shadow-emerald-900/10'
-                                    }`}>
-                                {isCalled && (
-                                    <div className="absolute inset-0 bg-amber-500/10 animate-pulse z-0 pointer-events-none"></div>
-                                )}
+                    ) : calledList.map(d => (
+                        <div key={d.id} className="relative overflow-hidden rounded-[1.5rem] md:rounded-[2rem] bg-gradient-to-br from-amber-500 to-orange-600 p-1 shadow-[0_0_20px_rgba(245,158,11,0.3)] animate-pulse">
+                            <div className="bg-slate-900 h-full rounded-[1.3rem] md:rounded-[1.8rem] p-5 md:p-6 relative overflow-hidden">
+                                {/* Watermark (Hidden on mobile to save space) */}
+                                <div className="hidden md:block absolute -right-4 -bottom-4 text-[8rem] font-black text-white/5 select-none pointer-events-none">GO</div>
 
-                                <div className="relative z-10 flex justify-between items-center">
-                                    <div className="flex-1 min-w-0 pr-4">
-                                        <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider mb-2
-                                            ${isCalled ? 'bg-amber-500 text-slate-900 animate-pulse shadow-lg shadow-amber-500/50' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
-                                            {isCalled ? "SILAKAN MERAPAT" : "SEDANG PROSES"}
-                                        </div>
+                                <div className="relative z-10 text-center">
+                                    <div className="inline-block bg-amber-500/20 text-amber-400 text-[10px] md:text-sm font-black tracking-widest uppercase px-3 py-1 rounded-full mb-3 md:mb-4 animate-bounce border border-amber-500/30">
+                                        MENUJU KE
+                                    </div>
+                                    
+                                    {/* UBAH 3: Font Size Responsive (text-5xl di HP, text-7xl di Desktop) */}
+                                    <div className="text-5xl md:text-7xl font-black text-white font-mono tracking-tighter mb-2 drop-shadow-2xl">
+                                        {d.gate.replace('GATE_', '')}
+                                    </div>
+                                    
+                                    <div className="text-[10px] md:text-sm text-slate-400 font-bold uppercase tracking-widest mb-4 md:mb-6">
+                                        LOADING DOCK
+                                    </div>
 
-                                        <div className="text-5xl md:text-6xl font-black font-mono mb-1 tracking-tight text-white">
+                                    <div className="bg-white text-slate-900 rounded-xl py-2 md:py-3 px-4 shadow-xl">
+                                        <div className="text-3xl md:text-5xl font-black font-mono tracking-tight text-slate-900 truncate">
                                             {d.licensePlate}
                                         </div>
-                                        
-                                        <div className="flex items-center gap-3 mt-2 overflow-hidden">
-                                            <span className="px-3 py-1 rounded-lg bg-white/10 text-sm font-bold text-slate-400 border border-white/5 whitespace-nowrap">{d.company}</span>
-                                            <div className="flex items-center gap-2 text-lg md:text-xl text-slate-200 font-bold font-mono tracking-tight truncate">
-                                                <FileText className="w-4 h-4 text-slate-500" />
-                                                {d.doNumber}
-                                            </div>
-                                        </div>
                                     </div>
-
-                                    <div className="text-right shrink-0">
-                                        <div className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">DOCK / GATE</div>
-                                        <div className={`text-7xl font-black tracking-tighter drop-shadow-lg
-                                            ${d.gate === 'GATE_2' ? 'text-blue-400' : d.gate === 'GATE_4' ? 'text-purple-400' : 'text-white'}`}>
-                                            {d.gate.replace('GATE_', '')}
-                                        </div>
+                                    
+                                    <div className="mt-3 md:mt-4 flex justify-center gap-2 md:gap-4 text-slate-400 text-xs md:text-sm font-bold truncate">
+                                        <span>{d.company}</span>
                                     </div>
                                 </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* KANAN: ANTRIAN BERIKUTNYA (List Kecil) */}
-            <div className="bg-slate-900/40 backdrop-blur-sm rounded-3xl border border-white/10 p-6 flex flex-col relative overflow-hidden">
-                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
-
-                 <h2 className="text-3xl font-black text-white mb-6 flex items-center gap-4">
-                    <Clock className="w-8 h-8 text-blue-400" />
-                    ANTRIAN BERIKUTNYA
-                </h2>
-
-                <div className="grid grid-cols-12 gap-4 px-4 py-2 text-slate-500 font-bold uppercase text-sm tracking-wider border-b border-white/10 mb-2">
-                    <div className="col-span-3">No. Antrian</div>
-                    <div className="col-span-6">Identitas & Dokumen</div>
-                    <div className="col-span-3 text-right">Gate</div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
-                    {waitingDrivers.length === 0 ? (
-                        <div className="mt-20 text-center text-slate-600 italic text-xl">Tidak ada antrian</div>
-                    ) : waitingDrivers.map((d, i) => (
-                        <div key={d.id} className="grid grid-cols-12 gap-4 items-center p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition-colors animate-fade-in-up" style={{ animationDelay: `${i * 100}ms` }}>
-                            <div className="col-span-3">
-                                <span className="text-3xl font-black font-mono text-yellow-400">{d.queueNumber || '-'}</span>
-                            </div>
-                            <div className="col-span-6 min-w-0">
-                                <div className="text-2xl font-bold text-white mb-1">{d.licensePlate}</div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-bold bg-white/10 px-2 py-0.5 rounded text-slate-400 border border-white/5 shrink-0">{d.company}</span>
-                                    <span className="text-sm text-slate-300 font-mono font-medium truncate">{d.doNumber}</span>
-                                </div>
-                            </div>
-                            <div className="col-span-3 text-right">
-                                <span className={`text-2xl font-black font-mono ${d.gate === 'GATE_2' ? 'text-blue-400' : d.gate === 'GATE_4' ? 'text-purple-400' : 'text-slate-500'}`}>
-                                    {d.gate !== 'NONE' ? d.gate.replace('GATE_', '') : '-'}
-                                </span>
                             </div>
                         </div>
                     ))}
                 </div>
-            </div>
-        </div>
+            </section>
+            
+            {/* === ZONA 1: ANTRIAN (WAITING) === */}
+            {/* Di HP urutan kedua */}
+            <section className="lg:col-span-3 bg-slate-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden max-h-[400px] lg:max-h-none">
+                <div className="p-3 md:p-4 bg-slate-800/30 border-b border-white/5 flex justify-between items-center">
+                    <h2 className="font-bold text-slate-300 flex items-center gap-2 text-sm md:text-base">
+                        <Clock className="w-4 h-4 md:w-5 md:h-5 text-slate-400" /> ANTRIAN
+                    </h2>
+                    <span className="bg-slate-700 text-white text-[10px] md:text-xs font-bold px-2 py-1 rounded-full">{waitingList.length}</span>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-3 space-y-2 md:space-y-3 custom-scrollbar">
+                    {waitingList.length === 0 ? (
+                        <div className="h-32 lg:h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
+                            <p className="text-xs font-bold">Tidak ada antrian</p>
+                        </div>
+                    ) : waitingList.map((d, i) => (
+                        <div key={d.id} className="bg-white/5 p-3 rounded-xl border border-white/5 hover:bg-white/10 transition-colors flex justify-between items-center">
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-amber-400 font-mono font-black text-lg md:text-xl">#{d.queueNumber}</span>
+                                    <span className="text-white font-bold text-sm md:text-lg">{d.licensePlate}</span>
+                                </div>
+                                <div className="text-[10px] md:text-xs text-slate-400 truncate w-32 md:w-auto">{d.company}</div>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-white/10 whitespace-nowrap">
+                                {d.verifiedTime ? Math.floor((Date.now() - d.verifiedTime) / 60000) : 0} min
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </section>
 
-        {/* RUNNING TEXT BAWAH */}
-        <div className="fixed bottom-0 left-0 w-full bg-slate-900 border-t border-white/10 text-white py-3 overflow-hidden whitespace-nowrap z-50">
-            <div className="animate-[shimmer_20s_linear_infinite] inline-block font-mono font-bold text-lg text-blue-200">
-                +++ HARAP MEMPERSIAPKAN DOKUMEN SEBELUM MENUJU GATE +++ DILARANG MEROKOK DI AREA BONGKAR MUAT +++ UTAMAKAN KESELAMATAN KERJA +++ 
-                DRIVER DENGAN STATUS "DIPANGGIL" HARAP SEGERA MERAPAT KE DOCKING +++
+            {/* === ZONA 3: PROSES BONGKAR === */}
+            <section className="lg:col-span-4 bg-slate-900/50 rounded-3xl border border-white/5 flex flex-col overflow-hidden max-h-[400px] lg:max-h-none">
+                <div className="p-3 md:p-4 bg-blue-900/10 border-b border-blue-500/20 flex justify-between items-center">
+                    <h2 className="font-bold text-blue-200 flex items-center gap-2 text-sm md:text-base">
+                        <Activity className="w-4 h-4 md:w-5 md:h-5 text-blue-400" /> PROSES BONGKAR
+                    </h2>
+                    <span className="bg-blue-900/50 text-blue-200 text-[10px] md:text-xs font-bold px-2 py-1 rounded-full border border-blue-500/30">{loadingList.length}</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-3 md:space-y-4 custom-scrollbar">
+                    {loadingList.length === 0 ? (
+                        <div className="h-32 lg:h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
+                            <p className="text-xs font-bold">Dock Kosong</p>
+                        </div>
+                    ) : loadingList.map(d => (
+                        <div key={d.id} className="bg-blue-950/20 border border-blue-500/20 p-4 rounded-2xl relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                            <div className="flex justify-between items-start mb-1">
+                                <div className="text-blue-400 font-bold text-xs md:text-sm tracking-wide">
+                                    {d.gate.replace('GATE_', 'DOCK ')}
+                                </div>
+                                <div className="flex items-center gap-1.5 bg-blue-500/10 px-2 py-1 rounded text-[10px] font-bold text-blue-300 border border-blue-500/20">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                                    LOADING
+                                </div>
+                            </div>
+                            <div className="text-xl md:text-3xl font-mono font-bold text-white mb-1">{d.licensePlate}</div>
+                            <div className="text-xs md:text-sm text-slate-400 truncate">{d.company}</div>
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+        </main>
+
+        {/* FOOTER (Running Text) */}
+        <footer className="h-10 md:h-12 bg-slate-900 border-t border-white/10 shrink-0 relative overflow-hidden flex items-center mt-auto">
+            <div className="absolute left-0 z-20 h-full bg-slate-900 px-3 md:px-4 flex items-center border-r border-white/10 shadow-xl">
+                <span className="text-red-500 font-black tracking-widest text-[10px] md:text-xs flex items-center gap-2">
+                    <AlertCircle className="w-3 h-3 md:w-4 md:h-4" /> INFO
+                </span>
             </div>
-        </div>
-        
+            
+            <div className="whitespace-nowrap animate-[marquee_20s_linear_infinite] md:animate-[marquee_30s_linear_infinite] pl-[100vw]">
+                <span className="text-slate-300 font-mono text-sm md:text-lg font-bold mx-4">
+                    +++ DRIVER WAJIB MENGGUNAKAN SEPATU SAFETY +++ DILARANG MEROKOK +++ HARAP MENYIAPKAN SURAT JALAN +++
+                </span>
+            </div>
+        </footer>
+
         <style>{`
-            .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-            .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
-            .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 10px; }
+            .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+            .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+            
+            @keyframes marquee {
+                0% { transform: translateX(0); }
+                100% { transform: translateX(-100%); }
+            }
         `}</style>
     </div>
   );
